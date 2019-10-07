@@ -205,9 +205,7 @@ class Menu():
 			"save_end": 'end save state',
 			}
 
-	default	= {
-				"intro": 'Добро пожаловать в меня бота',
-				}
+	default	= {"intro": {"Russian": 'Добро пожаловать в меню бота', "English": 'Welcome to the bot menu'}}
 			
 
 	def __init__(self, menu, commands, bot):
@@ -224,10 +222,12 @@ class Menu():
 		user_id = str(message["chat"]["id"])
 		body = message["text"]
 		
-		self.users_tg.setdefault(user_id, {"level": 'start'})
+		self.users_tg.setdefault(user_id, {"level": 'start', "payload": {}})		# add payload
 		level = self.users_tg[user_id]["level"]
 		to_level = level
-		print(level, user_id, body)
+		lng = self.users_tg[user_id].get("language", 'Russian')
+		
+		print(level, user_id, body, lng)
 		
 		flag = False
 		for action in self.state[ self.users_tg[user_id]["level"] ]["action"]:
@@ -236,7 +236,7 @@ class Menu():
 			if action["label"] == body:
 			
 				# Сообщение от бота которое генерируется при нажатии на кнопку
-				message_bot = action["message"]
+				message_bot = action["message"].get(lng, action["message"])
 			
 				# Подгружаем функцию, если ее надо выполнить при нажатии кнопки, а не просто перейти на другой уровень
 				cmd = self.commands.get(level + ':' + body, None)
@@ -266,7 +266,7 @@ class Menu():
 			else:
 				# Откатиться на начало в случае бабуйни от пользователя
 				to_level = 'start'
-				self.tg.send_message(user_id, self.default["intro"], reply_markup = self.state["setdefault"]["keyboard"])
+				self.tg.send_message(user_id, self.default["intro"][lng], reply_markup = self.state["setdefault"]["keyboard"])
 				
 		if level != to_level:
 			# Произошло изменение уровня пользователя
