@@ -10,9 +10,10 @@ from pprint import pprint
 
 class Api(object):
 
-	RPS_DELAY = 0.34  # ~3 requests per second
+	RPS_DELAY = 0.34	# ~3 requests per second
 	BOT_WAIT = 25
 	last_request = 0.0
+	DEL_DELAY = 25		# удаляем сообщения бота по умолчанию через 25 секунд
 
 	url = 'https://api.telegram.org/bot'
 	offset = 0
@@ -25,6 +26,8 @@ class Api(object):
 					"getMe": url + 'getMe',
 					"getUpdates": url + 'getUpdates',
 					"sendMessage": url + 'sendMessage',
+					"deleteMessage": url + 'deleteMessage',
+					"getChat": url + 'getChat',
 					}
 	
 		# private_text: function итд
@@ -39,10 +42,11 @@ class Api(object):
 		print('check BOT telegram')
 		tx = self.get_me()
 		if tx:
-			bot_name = tx["username"]
-			print(bot_name, 'ok')
+			self.bot_name = tx["username"]
+			print(self.bot_name, 'ok')
 		else:
 			print('ERROR', token)
+			sleep(60)
 		
 		
 	##### ##### ##### ##### #####
@@ -61,7 +65,7 @@ class Api(object):
 	
 		while self.flag:
 
-			updates = self.get_updates_limit()		# Считываем тока по одному сообщению
+			updates = self.get_updates_limit()		# Считываем тока по одному сообщению (это замедляет бота, так что далее нужна оптимизация)
 			for tx in updates:
 				
 				message = tx.get("message", None)
@@ -104,15 +108,17 @@ class Api(object):
 					elif text and not private and not reply and entities:
 						self.commands["chat_entities"](tx["message"])			# Команду в группе боту
 					else:
-						pprint(tx)
+						#pprint(tx)
+						print('new message')
 						
 				else:
-					pprint(tx)
+					print('not message')
+					#pprint(tx)
 				
 				self.offset = tx["update_id"] + 1
 				#input('next')
 	
-			sleep(self.RPS_DELAY)		### так же задействовать таймер сообщений, но необязательно так как при самом запросе есть лимит уже
+			#sleep(self.RPS_DELAY)		### так же задействовать таймер сообщений, но необязательно так как при самом запросе есть лимит уже
 			
 			
 	def command_pass(self, message):
@@ -129,6 +135,11 @@ class Api(object):
 		
 	def get_updates_limit(self):
 		return(self.method('getUpdates', values = {"offset": self.offset, "limit": 1}))
+		
+		
+	def getChat(self, chat_id):
+		return(self.method('getChat', values = {"chat_id": chat_id}))
+		
 		
 	def send_message(self, chat_id, text, **kwargs):
 		
@@ -151,7 +162,31 @@ class Api(object):
 					
 					"reply_markup": reply_markup,
 				}
-		return(self.method('sendMessage', values = values))
+				
+		tx = self.method('sendMessage', values = values)
+		
+		### delete message
+		delete_message = kwargs.get("delete", False)
+		if delete_message:
+			# Задержка перед удалением мессаги 25 секунд
+			dt = kwargs.get("time", self.DEL_DELAY)
+			payload = [str(tx["chat"]["id"]), tx["message_id"], dt]
+			bot_thread_del_msg = threading.Thread(target = self.delete_message, daemon = True, args=(payload,))
+			bot_thread_del_msg.start()
+		
+		return tx
+
+		
+	def delete_message(self, payload, **kwargs):
+		chat_id, message_id, dt = payload
+		#print(chat_id, message_id, dt)
+		sleep(dt)
+		try:
+			tx = self.method('deleteMessage', values = {"chat_id": int(chat_id), "message_id": message_id})
+		except:
+			tx = False
+			print('error delete msg')
+		return tx
 		
 		
 	def method(self, method, values = None):
@@ -168,7 +203,6 @@ class Api(object):
 			delay = self.RPS_DELAY - (time() - self.last_request)
 			if delay > 0:
 				sleep(delay)
-
 			try:
 				response = self.http.post(self.cmd[method], values)
 			except:
@@ -185,7 +219,8 @@ class Api(object):
 			return(tx["result"])
 		else:
 			print('error')
-			pprint(response)
+			print(response.text)
+			print(values)
 			return False
 		
 	##### ##### ##### ##### #####

@@ -1,6 +1,6 @@
-# thallid-tg - Unofficial Python Library for Telegram
+# thallid-tg - Python Library for Telegram Bot
 
-Thallid-Telegram библиотека для Telegram
+Thallid-Telegram библиотека для Telegram ботов
 
 
 # Installation
@@ -29,3 +29,13 @@ bot_menu = Menu(menu.menu, commands, tg)
 
 tg.run()
 ```
+
+# Подключеня следующие функции
+
+getMe
+getUpdates
+sendMessage
+deleteMessage
+getChat
+
+tg.send_message(chat_id, msg, delete = True)
