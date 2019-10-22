@@ -118,7 +118,7 @@ class Api(object):
 				self.offset = tx["update_id"] + 1
 				#input('next')
 	
-			#sleep(self.RPS_DELAY)		### так же задействовать таймер сообщений, но необязательно так как при самом запросе есть лимит уже
+			sleep(self.RPS_DELAY)		### так же задействовать таймер сообщений, чтобы асинхронные запросы пахали
 			
 			
 	def command_pass(self, message):
@@ -163,23 +163,35 @@ class Api(object):
 					"reply_markup": reply_markup,
 				}
 				
-		tx = self.method('sendMessage', values = values)
+		flag_error = False
+		try:
+			tx = self.method('sendMessage', values = values)
+		except:
+			print('error to send message')
+			flag_error = True
+			tx = None
 		
 		### delete message
 		delete_message = kwargs.get("delete", False)
-		if delete_message:
+		if delete_message and not(flag_error):
 			# Задержка перед удалением мессаги 25 секунд
 			dt = kwargs.get("time", self.DEL_DELAY)
-			payload = [str(tx["chat"]["id"]), tx["message_id"], dt]
-			bot_thread_del_msg = threading.Thread(target = self.delete_message, daemon = True, args=(payload,))
-			bot_thread_del_msg.start()
+			try:
+				payload = [str(tx["chat"]["id"]), tx["message_id"], dt]
+				tx_del = self.delete_message(payload)
+			except:
+				print('error to del message')
 		
 		return tx
 
 		
 	def delete_message(self, payload, **kwargs):
+		bot_thread_del_msg = threading.Thread(target = self._delete_message, daemon = True, args=(payload,))
+		bot_thread_del_msg.start()
+		return True
+		
+	def _delete_message(self, payload, **kwargs):
 		chat_id, message_id, dt = payload
-		#print(chat_id, message_id, dt)
 		sleep(dt)
 		try:
 			tx = self.method('deleteMessage', values = {"chat_id": int(chat_id), "message_id": message_id})
