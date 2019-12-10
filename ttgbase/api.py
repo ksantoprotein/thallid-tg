@@ -7,6 +7,8 @@ import json
 from time import time, sleep
 from pprint import pprint
 
+#https://core.telegram.org/bots/api
+
 
 class Api(object):
 
@@ -18,17 +20,14 @@ class Api(object):
 	url = 'https://api.telegram.org/bot'
 	offset = 0
 	
+	bot_cmd_list = ['getMe', 'getUpdates', 'getChat', 'getFile', 
+					'sendMessage', 'sendPhoto', 'sendVideo', 'sendMediaGroup', 
+					'deleteMessage']
+	
 	def __init__(self, token):
 	
 		url = self.url + token + '/'
-		
-		self.cmd = {
-					"getMe": url + 'getMe',
-					"getUpdates": url + 'getUpdates',
-					"sendMessage": url + 'sendMessage',
-					"deleteMessage": url + 'deleteMessage',
-					"getChat": url + 'getChat',
-					}
+		self.cmd = {i: url + i for i in self.bot_cmd_list}
 	
 		# private_text: function итд
 		types = ['private', 'chat']
@@ -139,7 +138,11 @@ class Api(object):
 		
 	def getChat(self, chat_id):
 		return(self.method('getChat', values = {"chat_id": chat_id}))
+
 		
+	def getFile(self, file_id):
+		return(self.method('getFile', values = {"file_id": file_id}))
+
 		
 	def send_message(self, chat_id, text, **kwargs):
 		
@@ -183,8 +186,102 @@ class Api(object):
 				print('error to del message')
 		
 		return tx
+		
+	def send_media(self, chat_id, data, **kwargs):
+	
+		caption = kwargs.get("caption", None)
+		data = [data] if isinstance(data, str) else data
+		mono = True if len(data) == 1 else False
+		type = 'video' if data[0].split('.')[-1:][0] == 'mp4' else 'photo'
+		values = {"chat_id": str(chat_id)}
+		url = kwargs.get("url", None)
+		
+		files, media = {}, []
+		if mono:
+			cmd = 'sendPhoto' if type == 'photo' else 'sendVideo'
+			values["caption"] = caption
+			if url:
+				values[type] = data[0]
+			else:
+				with open(data[0], 'rb') as f:
+					files[type] = f.read()
+			if type == 'video':
+				values["supports_streaming"] = True
+			
+		else:
+			cmd = 'sendMediaGroup'
+			for link in data:
+				payment = {"type": type}
+				sleep(0.001)
+				if url:
+					payment["media"] = link
+				else:
+					name = str(round(time() * 1000))
+					with open(link, 'rb') as f:
+						files[name] = f.read()
+					payment["media"] = 'attach://' + name
+				if type == 'video':
+					payment["supports_streaming"] = True
+				
+				media.append(payment)
+					
+			values["media"] = json.dumps(media)
+			
+		files = None if url else files
+		
+		try:
+			tx = self.method(cmd, values = values, files = files)
+		except:
+			print('error to send message')
+			tx = None
+		
+		return tx
 
 		
+	def send_media_photo(self, chat_id, photos, **kwargs):
+	
+		#photos list aka media
+		
+		caption = kwargs.get("caption", '')
+		#caption = captoin[:1000] if len(caption) > 1000 else caption
+		parse_mode = kwargs.get("parse_mode", '')
+		disable_notification = kwargs.get("disable_notification", None)
+		reply_to_message_id = kwargs.get("reply_to_message_id", None)
+		
+		url = kwargs.get("url", None)
+		if url:
+			media = []
+			for photo in photos:
+				media.append({"type": 'photo', "media": photo, "caption": caption, "parse_mode": parse_mode})
+			files = None
+		else:
+			media, files = [], {}
+			for photo in photos:
+				sleep(0.001)
+				name = str(round(time() * 1000))
+				print(name)
+				with open(photo, 'rb') as f:
+					files[name] = f.read()
+				media.append({"type": 'photo', "media": 'attach://' + name, "caption": caption, "parse_mode": parse_mode})
+		
+		values = {
+					"chat_id": str(chat_id),
+					"media": json.dumps(media),
+					"disable_notification": disable_notification,
+					"reply_to_message_id": reply_to_message_id,
+				}
+				
+		flag_error = False
+		try:
+			tx = self.method('sendMediaGroup', values = values, files = files)
+		except:
+			print('error to send message')
+			flag_error = True
+			tx = None
+		
+		return tx
+		
+
 	def delete_message(self, payload, **kwargs):
 		bot_thread_del_msg = threading.Thread(target = self._delete_message, daemon = True, args=(payload,))
 		bot_thread_del_msg.start()
@@ -201,7 +298,7 @@ class Api(object):
 		return tx
 		
 		
-	def method(self, method, values = None):
+	def method(self, method, values = None, files = None):
 	
 		""" Вызов метода API
 		:param method: название метода 		:type method: str
@@ -216,7 +313,8 @@ class Api(object):
 			if delay > 0:
 				sleep(delay)
 			try:
-				response = self.http.post(self.cmd[method], values)
+				#response = self.http.post(self.cmd[method], values, files)
+				response = self.http.request('get', self.cmd[method], params = values, files = files)
 			except:
 				print('NOT connect to telegram, change proxy')
 				return False
@@ -232,7 +330,7 @@ class Api(object):
 		else:
 			print('error')
 			print(response.text)
-			print(values)
+			#print(values)
 			return False
 		
 	##### ##### ##### ##### #####
