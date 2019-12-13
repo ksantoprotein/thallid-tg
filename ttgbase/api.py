@@ -21,8 +21,12 @@ class Api(object):
 	offset = 0
 	
 	bot_cmd_list = ['getMe', 'getUpdates', 'getChat', 'getFile', 
-					'sendMessage', 'sendPhoto', 'sendVideo', 'sendMediaGroup', 
+					'sendMessage', 'sendPhoto', 'sendAnimation', 'sendVideo', 'sendMediaGroup', 
 					'deleteMessage']
+					
+	ext_types = {"mp4": 'video', "gif": 'video', "jpg": 'photo', "png": 'photo'}
+	cmd_types = {"video": 'sendVideo', "animation": 'sendAnimation', "photo": 'sendPhoto'}
+	
 	
 	def __init__(self, token):
 	
@@ -192,13 +196,14 @@ class Api(object):
 		caption = kwargs.get("caption", None)
 		data = [data] if isinstance(data, str) else data
 		mono = True if len(data) == 1 else False
-		type = 'video' if data[0].split('.')[-1:][0] == 'mp4' else 'photo'
 		values = {"chat_id": str(chat_id)}
 		url = kwargs.get("url", None)
 		
 		files, media = {}, []
 		if mono:
-			cmd = 'sendPhoto' if type == 'photo' else 'sendVideo'
+			ext = data[0].split('.')[-1:][0].lower()
+			type = self.ext_types[ext]
+			cmd = self.cmd_types[type]
 			values["caption"] = caption
 			if url:
 				values[type] = data[0]
@@ -211,6 +216,8 @@ class Api(object):
 		else:
 			cmd = 'sendMediaGroup'
 			for link in data:
+				ext = link.split('.')[-1:][0].lower()
+				type = self.ext_types[ext]
 				payment = {"type": type}
 				sleep(0.001)
 				if url:
@@ -222,6 +229,8 @@ class Api(object):
 					payment["media"] = 'attach://' + name
 				if type == 'video':
 					payment["supports_streaming"] = True
+				if type == 'animation':
+					payment["type"] = 'photo'
 				
 				media.append(payment)
 					
@@ -237,50 +246,6 @@ class Api(object):
 		
 		return tx
 
-		
-	def send_media_photo(self, chat_id, photos, **kwargs):
-	
-		#photos list aka media
-		
-		caption = kwargs.get("caption", '')
-		#caption = captoin[:1000] if len(caption) > 1000 else caption
-		parse_mode = kwargs.get("parse_mode", '')
-		disable_notification = kwargs.get("disable_notification", None)
-		reply_to_message_id = kwargs.get("reply_to_message_id", None)
-		
-		url = kwargs.get("url", None)
-		if url:
-			media = []
-			for photo in photos:
-				media.append({"type": 'photo', "media": photo, "caption": caption, "parse_mode": parse_mode})
-			files = None
-		else:
-			media, files = [], {}
-			for photo in photos:
-				sleep(0.001)
-				name = str(round(time() * 1000))
-				print(name)
-				with open(photo, 'rb') as f:
-					files[name] = f.read()
-				media.append({"type": 'photo', "media": 'attach://' + name, "caption": caption, "parse_mode": parse_mode})
-		
-		values = {
-					"chat_id": str(chat_id),
-					"media": json.dumps(media),
-					"disable_notification": disable_notification,
-					"reply_to_message_id": reply_to_message_id,
-				}
-				
-		flag_error = False
-		try:
-			tx = self.method('sendMediaGroup', values = values, files = files)
-		except:
-			print('error to send message')
-			flag_error = True
-			tx = None
-		
-		return tx
-		
 
 	def delete_message(self, payload, **kwargs):
 		bot_thread_del_msg = threading.Thread(target = self._delete_message, daemon = True, args=(payload,))
