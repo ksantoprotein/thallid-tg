@@ -7,41 +7,34 @@ import json
 from time import time, sleep
 from pprint import pprint
 
+from .rpc_client import RpcClient
+
 #https://core.telegram.org/bots/api
 
 
 class Api(object):
 
-	RPS_DELAY = 0.34	# ~3 requests per second
-	BOT_WAIT = 25
-	last_request = 0.0
+	BOT_WAIT = 1
+	limit = 10			# кол во сообщий для бота в апдейте
 	DEL_DELAY = 25		# удаляем сообщения бота по умолчанию через 25 секунд
-
-	url = 'https://api.telegram.org/bot'
-	offset = 0
 	
-	bot_cmd_list = ['getMe', 'getUpdates', 'getChat', 'getFile', 
-					'sendMessage', 'sendPhoto', 'sendAnimation', 'sendVideo', 'sendMediaGroup', 
-					'deleteMessage']
+	bot_commands = ['private_text', 'chat_text', 'private_reply', 'chat_reply', 'private_entities', 'chat_entities']
+	#bot_cmd_list = ['getMe', 'getUpdates', 'getChat', 'getFile', 'sendMessage', 'sendPhoto', 'sendAnimation', 'sendVideo', 'sendMediaGroup', 'deleteMessage']
 					
 	ext_types = {"mp4": 'video', "gif": 'video', "jpg": 'photo', "png": 'photo'}
 	cmd_types = {"video": 'sendVideo', "animation": 'sendAnimation', "photo": 'sendPhoto'}
 	
 	
-	def __init__(self, token):
+	def __init__(self, token, **kwargs):
 	
-		url = self.url + token + '/'
-		self.cmd = {i: url + i for i in self.bot_cmd_list}
+		self.token = token
+		report = kwargs.pop("report", False)
+		PROXY = kwargs.pop("PROXY", False)
+		self.rpc = RpcClient(self.token, report=report, PROXY=PROXY)
+		
+		self.load_state()
+		self.prepare_commands_empty()
 	
-		# private_text: function итд
-		types = ['private', 'chat']
-		events = ['text', 'reply', 'entities', 'forward', 'photo', 'document', 'sticker']
-		cmds = ['_'.join([type, event]) for type in types for event in events]
-		self.commands = {cmd: self.command_pass for cmd in cmds}
-					
-		self.http = requests.Session()
-		self.lock = threading.Lock()					#http://www.quizful.net/post/thread-synchronization-in-python
-
 		print('check BOT telegram')
 		tx = self.get_me()
 		if tx:
@@ -49,16 +42,112 @@ class Api(object):
 			print(self.bot_name, 'ok')
 		else:
 			print('ERROR', token)
-			sleep(60)
+			input('STOP')
 		
+	##### ##### MESSAGE ##### #####
 		
-	##### ##### ##### ##### #####
+	def send_message(self, chat_id, text, **kwargs):
+		
+		parse_mode = kwargs.get("parse_mode", None)
+		disable_web_page_preview = kwargs.get("disable_web_page_preview", None)
+		disable_notification = kwargs.get("disable_notification", None)
+		reply_to_message_id = kwargs.get("reply_to_message_id", None)
+		
+		reply_markup = kwargs.get("reply_markup", None)		#aka buttons {}
+		if reply_markup: reply_markup = json.dumps(reply_markup)
+		
+		values = {
+					"chat_id": str(chat_id),
+					"text": text,
+					"parse_mode": parse_mode,
+					"disable_web_page_preview": disable_web_page_preview,
+					"disable_notification": disable_notification,
+					"reply_to_message_id": reply_to_message_id,
+					"reply_markup": reply_markup,
+				}
+				
+		flag_error = False
+		try:
+			tx = self.rpc.call('sendMessage', **values)
+		except:
+			print('error to send message')
+			flag_error = True
+			tx = None
+		
+		### delete message
+		delete_message = kwargs.get("delete", False)
+		if delete_message and not(flag_error):
+			# Задержка перед удалением мессаги 25 секунд
+			dt = kwargs.get("time", self.DEL_DELAY)
+			try:
+				payload = [str(tx["chat"]["id"]), tx["message_id"], dt]
+				tx_del = self.delete_message(payload)
+			except:
+				print('error to del message')
+		
+		return tx
+		
+	def delete_message(self, payload, **kwargs):
+		bot_thread_del_msg = threading.Thread(target=self._delete_message, daemon=True, args=(payload,))
+		bot_thread_del_msg.start()
+		return True
+		
+	def _delete_message(self, payload, **kwargs):
+		chat_id, message_id, dt = payload
+		sleep(dt)
+		try:
+			tx = self.rpc.call('deleteMessage', chat_id=int(chat_id), message_id=message_id)
+		except:
+			tx = False
+			print('error delete msg')
+		return tx
+		
+	##### ##### GET ##### #####
+	
+	def get_me(self):
+		return(self.rpc.call('getMe'))
+
+	def getChat(self, chat_id):
+		return(self.rpc.call('getChat', values={"chat_id": chat_id}))
+		
+	def get_updates(self):
+		return(self.rpc.call('getUpdates'))
+		
+	def get_updates_limit(self):
+		return(self.rpc.call('getUpdates', offset=self.state["offset"], limit=self.limit))
+		
+	def getFile(self, file_id):
+		return(self.rpc.call('getFile', file_id=file_id))
+
+	##### ##### STATE ##### #####
+	
+	def load_state(self):
+		try:
+			with open('state.json', 'r', encoding='utf8') as f:
+				self.state = json.load(f)
+			if self.state["token"] != self.token: self.prepare_state()
+		except:	# not exist or bad file
+			self.prepare_state()
+		
+	def save_state(self):
+		with open('state.json', 'w', encoding='utf8') as f:
+			json.dump(self.state, f, ensure_ascii=False)
+			
+	def prepare_state(self):
+		self.state = {"token": self.token, "offset": 0}
+		self.save_state()
+		
+	def prepare_commands_empty(self):
+		self.commands = {cmd: self.command_pass for cmd in self.bot_commands}
+	
+	
+	##### ##### LOOP ##### #####
 	
 	def run(self):
 	
 		# self.commands функции которые надо вызвать на новые сообщения
 		self.flag = True
-		bot_thread = threading.Thread(target = self.scan, daemon = True)
+		bot_thread = threading.Thread(target=self.scan, daemon=True)
 		bot_thread.start()
 
 		
@@ -70,9 +159,12 @@ class Api(object):
 
 			updates = self.get_updates_limit()		# Считываем тока по одному сообщению (это замедляет бота, так что далее нужна оптимизация)
 			for tx in updates:
+			
+				#pprint(tx)
 				
 				message = tx.get("message", None)
 				edited = False if message else True
+				#print(message)
 				# Потом подумать что делать с редактироанием сообщений и как реагировать боту
 				#if not message:
 				#	message = tx.get("edited_message", None)
@@ -96,6 +188,7 @@ class Api(object):
 					forward = True if tx["message"].get("forward_from", None) else False
 					entities = True if tx["message"].get("entities", None) else False
 					
+					
 					if text and private and not reply and not entities:
 						self.commands["private_text"](tx["message"])			# Сообщение боту
 					elif text and not private and not reply and not entities:
@@ -118,79 +211,20 @@ class Api(object):
 					print('not message')
 					#pprint(tx)
 				
-				self.offset = tx["update_id"] + 1
+				self.state["offset"] = tx["update_id"] + 1
+				self.save_state()
 				#input('next')
 	
-			sleep(self.RPS_DELAY)		### так же задействовать таймер сообщений, чтобы асинхронные запросы пахали
+			#sleep(self.RPS_DELAY)		### так же задействовать таймер сообщений, чтобы асинхронные запросы пахали
+			sleep(self.BOT_WAIT)
 			
 			
 	def command_pass(self, message):
+		print('not used')
 		pass
 
-
-	def get_me(self):
-		return(self.method('getMe'))
-
 		
-	def get_updates(self):
-		return(self.method('getUpdates'))
-		
-		
-	def get_updates_limit(self):
-		return(self.method('getUpdates', values = {"offset": self.offset, "limit": 1}))
-		
-		
-	def getChat(self, chat_id):
-		return(self.method('getChat', values = {"chat_id": chat_id}))
-
-		
-	def getFile(self, file_id):
-		return(self.method('getFile', values = {"file_id": file_id}))
-
-		
-	def send_message(self, chat_id, text, **kwargs):
-		
-		parse_mode = kwargs.get("parse_mode", None)
-		disable_web_page_preview = kwargs.get("disable_web_page_preview", None)
-		disable_notification = kwargs.get("disable_notification", None)
-		reply_to_message_id = kwargs.get("reply_to_message_id", None)
-		
-		reply_markup = kwargs.get("reply_markup", None)		#aka buttons {}
-		if reply_markup:
-			reply_markup = json.dumps(reply_markup)
-		
-		values = {
-					"chat_id": str(chat_id),
-					"text": text,
-					"parse_mode": parse_mode,
-					"disable_web_page_preview": disable_web_page_preview,
-					"disable_notification": disable_notification,
-					"reply_to_message_id": reply_to_message_id,
-					
-					"reply_markup": reply_markup,
-				}
-				
-		flag_error = False
-		try:
-			tx = self.method('sendMessage', values = values)
-		except:
-			print('error to send message')
-			flag_error = True
-			tx = None
-		
-		### delete message
-		delete_message = kwargs.get("delete", False)
-		if delete_message and not(flag_error):
-			# Задержка перед удалением мессаги 25 секунд
-			dt = kwargs.get("time", self.DEL_DELAY)
-			try:
-				payload = [str(tx["chat"]["id"]), tx["message_id"], dt]
-				tx_del = self.delete_message(payload)
-			except:
-				print('error to del message')
-		
-		return tx
-		
+	"""
 	def send_media(self, chat_id, data, **kwargs):
 	
 		caption = kwargs.get("caption", None)
@@ -245,59 +279,8 @@ class Api(object):
 			tx = None
 		
 		return tx
+	"""
 
-
-	def delete_message(self, payload, **kwargs):
-		bot_thread_del_msg = threading.Thread(target = self._delete_message, daemon = True, args=(payload,))
-		bot_thread_del_msg.start()
-		return True
-		
-	def _delete_message(self, payload, **kwargs):
-		chat_id, message_id, dt = payload
-		sleep(dt)
-		try:
-			tx = self.method('deleteMessage', values = {"chat_id": int(chat_id), "message_id": message_id})
-		except:
-			tx = False
-			print('error delete msg')
-		return tx
-		
-		
-	def method(self, method, values = None, files = None):
-	
-		""" Вызов метода API
-		:param method: название метода 		:type method: str
-		:param values: параметры			:type values: dict
-		"""
-
-		values = values.copy() if values else {}
-
-		with self.lock:
-			# Ограничение 3 запроса в секунду
-			delay = self.RPS_DELAY - (time() - self.last_request)
-			if delay > 0:
-				sleep(delay)
-			try:
-				#response = self.http.post(self.cmd[method], values, files)
-				response = self.http.request('get', self.cmd[method], params = values, files = files)
-			except:
-				print('NOT connect to telegram, change proxy')
-				return False
-				
-			self.last_request = time()
-
-		if response.ok:
-			tx = response.json()
-			if 'error' in tx:
-				pprint(tx["error"])
-				return False
-			return(tx["result"])
-		else:
-			print('error')
-			print(response.text)
-			#print(values)
-			return False
-		
 	##### ##### ##### ##### #####
 
 		
@@ -362,7 +345,7 @@ class Menu():
 				
 		if flag:
 			# Кнопка из под меню была нажата, отправляем сообщение
-			self.tg.send_message(user_id, message_bot, reply_markup = keyboard)
+			self.tg.send_message(user_id, message_bot, reply_markup=keyboard)
 			if cmd:
 				# Исполнить функцию, так как нажата кнопка
 				cmd(message)
@@ -387,13 +370,13 @@ class Menu():
 	
 	def load(self):
 		try:
-			with open(self.files["state_main"], 'r', encoding = 'utf8') as f:
+			with open(self.files["state_main"], 'r', encoding='utf8') as f:
 				self.users_tg = json.load(f)
 				print(self.msg["json_load"])
 		except:
 			# not exist or bad file, load copy in *.bak
 			try:
-				with open(self.files["state_bak"], 'r', encoding = 'utf8') as f:
+				with open(self.files["state_bak"], 'r', encoding='utf8') as f:
 					self.users_tg = json.load(f)
 					print(self.msg["bak_load"])
 			except:
@@ -402,12 +385,12 @@ class Menu():
 				print(self.msg["new"])
 	
 	def save(self):
-		print(self.msg["save_start"])
-		with open(self.files["state_main"], 'w', encoding = 'utf8') as f:
-			json.dump(self.users_tg, f, ensure_ascii = False)
-		with open(self.files["state_bak"], 'w', encoding = 'utf8') as f:
-			json.dump(self.users_tg, f, ensure_ascii = False)
-		print(self.msg["save_end"])
+		#print(self.msg["save_start"])
+		with open(self.files["state_main"], 'w', encoding='utf8') as f:
+			json.dump(self.users_tg, f, ensure_ascii=False)
+		with open(self.files["state_bak"], 'w', encoding='utf8') as f:
+			json.dump(self.users_tg, f, ensure_ascii=False)
+		#print(self.msg["save_end"])
 		
 	def generate_buttons(self):
 	
@@ -425,4 +408,3 @@ class Menu():
 			
 	##### ##### ##### ##### #####
 		
-
